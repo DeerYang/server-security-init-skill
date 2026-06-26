@@ -106,6 +106,10 @@ The validator checks required files, frontmatter, and common secret/personal-dat
 
 This skill is written for Ubuntu/Debian systems using OpenSSH, systemd, UFW, and fail2ban. Other distributions, firewall systems, init systems, and SSH implementations need careful adaptation.
 
+## Friendly Links
+
+- [LINUX DO](https://linux.do)
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).

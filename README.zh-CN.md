@@ -106,6 +106,10 @@ python scripts/validate_skill.py
 
 这个 skill 面向使用 OpenSSH、systemd、UFW 和 fail2ban 的 Ubuntu/Debian 系统。其他发行版、防火墙系统、init 系统和 SSH 实现需要谨慎适配。
 
+## 友链
+
+- [LINUX DO](https://linux.do)
+
 ## 许可证
 
 MIT 许可证。见 [LICENSE](LICENSE)。
