@@ -45,6 +45,16 @@ Optional settings:
 | `local_key_comment` | `local_key_name` or user-specified comment |
 | `local_key_passphrase` | ask; do not assume empty passphrase unless user prefers automation |
 
+## Input Validation
+
+Validate values before substituting them into shell commands or config files:
+
+- `admin_user`: must be a normal Linux username such as `^[a-z_][a-z0-9_-]{0,31}$`; reject `root`, empty values, whitespace, shell metacharacters, path separators, and newline characters. If the account already exists, stop unless it is clearly an intended human admin account with UID >= 1000, a real home directory, and an interactive shell; never grant passwordless sudo to service/system accounts.
+- `initial_port`, `new_ssh_port`, and `allowed_tcp_ports`: must be numeric TCP ports in `1..65535`; prefer unprivileged ports `1024..65535` unless the user explicitly chooses a privileged port.
+- `public_key_source` or `public_key_content`: must resolve to exactly one valid non-empty SSH public key line. Verify with `ssh-keygen -lf` against a temporary public-key file and never print private key material.
+- `target_host`, `ssh_config_alias`, and `identity_file`: must not contain newline characters. Treat paths and aliases as data, not shell fragments.
+- `management_ips`: must contain only explicit IPs or CIDR ranges that the user recognizes. If the current egress IP cannot be determined confidently, ask before enabling fail2ban.
+
 ## Safety Rules
 
 - Do not disable root login, password login, the old SSH port, or the old firewall rule until `admin_user@new_ssh_port` has been verified in a separate SSH command.
@@ -52,7 +62,7 @@ Optional settings:
 - Back up files before editing: `/etc/ssh/sshd_config`, relevant `/etc/ssh/sshd_config.d/*.conf`, fail2ban jail files, and local `~/.ssh/config`.
 - Prefer drop-in files for new SSH/fail2ban policy, but ensure earlier directives cannot override the intended final state. Verify with `sshd -T`.
 - On systemd hosts, check `ssh.socket` before and after changing SSH ports. If socket activation is enabled, systemd may own the listening port and ignore `Port` values in `sshd_config`; prefer disabling `ssh.socket` and running the traditional `ssh.service` unless intentionally managing socket units.
-- Use server-side truth for port/firewall verification: `ss -ltnp`, `sshd -T`, `systemctl status ssh.socket ssh.service`, and `ufw status`. Local tests can be misleading under Clash/Mihomo TUN or fake-IP DNS.
+- Use server-side truth for port/firewall verification: `ss -ltnp`, `sshd -T`, `systemctl status ssh.socket ssh.service`, and `ufw status`. Listener checks must include `systemd` as well as `sshd`; socket activation can make PID 1 own the old port. Local tests can be misleading under Clash/Mihomo TUN or fake-IP DNS.
 - Configure fail2ban `ignoreip` before or while enabling fail2ban. Include the current admin egress IP and any usual jump/VPS exits.
 - If connectivity is lost, stop changing configuration and recover through an alternate egress, console, rescue panel, or provider VNC before continuing.
 - When updating local SSH config, make a backup and replace only the target host block. Do not use broad regexes that can consume following `Host` blocks.
@@ -60,6 +70,9 @@ Optional settings:
 - When generating a local keypair, never overwrite an existing private key. If `identity_file` or `identity_file.pub` already exists, stop and ask whether to reuse it or choose another name.
 - If the user only has an IP and root password, do not use password automation by default. Generate or select a public key, give the user a minimal command to install it under `/root/.ssh/authorized_keys`, and wait until root public-key login is verified.
 - Do not place root passwords in shell commands, SSH config, scripts, logs, or final answers. Password-based bootstrap is an advanced exception only when the user explicitly requests it and the environment has a safe non-interactive method.
+- If existing SSH config contains `Match` blocks or other non-stock policy, stop before bulk-commenting directives and explain the risk. Conditional `Match` policy can change effective authentication for specific users or source addresses.
+- If `admin_user` already exists, inspect it before writing sudoers or SSH keys. Stop on system users, service users, missing home directories, or non-interactive shells unless the user provides an explicit migration plan.
+- If UFW is already active with non-SSH rules, do not reset it without explicit user confirmation and a migration plan for existing service ports.
 
 ## Workflow
 
@@ -93,11 +106,11 @@ Optional settings:
    - Give the user generic server-side commands for the initial login user. For `root`, use:
 
      ```bash
-     mkdir -p /root/.ssh
-     chmod 700 /root/.ssh
-     printf '%s\n' '<public_key_content>' >> /root/.ssh/authorized_keys
+     install -d -m 700 -o root -g root /root/.ssh
+     touch /root/.ssh/authorized_keys
      chmod 600 /root/.ssh/authorized_keys
-     chown -R root:root /root/.ssh
+     chown root:root /root/.ssh/authorized_keys
+     grep -qxF '<public_key_content>' /root/.ssh/authorized_keys || printf '%s\n' '<public_key_content>' >> /root/.ssh/authorized_keys
      ```
 
    - If the initial login user is not `root`, adjust the home directory and ownership for that user.
@@ -107,20 +120,21 @@ Optional settings:
    - Confirm reachable public-key login path and gather system facts.
    - Inspect effective SSH settings, systemd `ssh.socket`/`ssh.service` state, listeners, firewall state, and current authorized keys.
    - Determine current admin egress IP from server logs or an external IP service.
+   - Validate all collected inputs before using them in commands.
 
 4. **Stage 1: add the new safe path**
    - Install `sudo` and `ufw` if needed.
-   - Create `admin_user`.
+   - Create `admin_user`, or verify an existing `admin_user` is a normal human admin account before changing its keys or sudo privileges.
    - Install the selected public key for `admin_user`.
    - Configure passwordless sudo for `admin_user` and validate with `visudo`.
    - Configure SSH to listen on both `initial_port` and `new_ssh_port`.
    - Configure UFW to allow both ports temporarily.
-   - If `ssh.socket` exists and is active/enabled, disable it and enable the traditional SSH service before relying on `sshd_config` ports.
-   - Restart SSH and verify the real listener with `ss -ltnp`, then verify `admin_user@new_ssh_port` plus `sudo -n whoami`.
+   - If `ssh.socket` exists and is active/enabled, disable it, remove or back up socket-related `ssh.service` drop-ins if present, run `systemctl daemon-reload`, and enable the traditional SSH service before relying on `sshd_config` ports.
+   - Restart SSH and verify the real listener with `ss -ltnp` including `systemd` and `sshd`, then verify `admin_user@new_ssh_port` plus `sudo -n whoami`.
 
 5. **Stage 2: harden the final state**
    - Set final SSH policy: `Port new_ssh_port`, `PubkeyAuthentication yes`, `PermitRootLogin no`, `PasswordAuthentication no`, `KbdInteractiveAuthentication no`.
-   - Validate with `sshd -t`, ensure `ssh.socket` cannot re-own the old port after reboot, then restart SSH.
+   - Validate with `sshd -t`, verify effective policy with `sshd -T` and `sshd -T -C` where source/user context matters, ensure `ssh.socket` cannot re-own the old port after reboot, then restart SSH and re-verify `admin_user@new_ssh_port` before changing final firewall rules.
    - Reset UFW to default deny incoming, default allow outgoing, and allow only required ports.
    - Verify with `ss -ltnp` that SSH listens on `new_ssh_port` and not the old port, then verify root login is refused and password login is refused.
 

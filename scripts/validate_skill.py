@@ -17,6 +17,7 @@ REQUIRED_FILES = [
     SKILL_DIR / "references" / "ubuntu-openssh-ufw-fail2ban.md",
     SKILL_DIR / "references" / "verification-checklist.md",
     ROOT / "README.md",
+    ROOT / "README.zh-CN.md",
     ROOT / "LICENSE",
     ROOT / "SECURITY.md",
 ]

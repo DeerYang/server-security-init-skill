@@ -2,7 +2,7 @@
 
 ## Supported Scope
 
-This repository provides a Codex skill and reference commands for hardening fresh Ubuntu/Debian SSH servers. It is not an automated security product and does not guarantee server safety.
+This repository provides an Agent Skill and reference commands for hardening fresh Ubuntu/Debian SSH servers. It is not an automated security product and does not guarantee server safety.
 
 ## Reporting Security Issues
 

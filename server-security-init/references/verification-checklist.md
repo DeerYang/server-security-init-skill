@@ -84,10 +84,16 @@ passwordauthentication no
 kbdinteractiveauthentication no
 ```
 
+If the server has non-default conditional SSH policy, also check the user/source-specific effective policy:
+
+```powershell
+ssh ALIAS "sudo sshd -T -C user=ADMIN_USER,host=TARGET_HOST,addr=MANAGEMENT_IP | egrep '^(port|permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '"
+```
+
 ## SSH Systemd Socket State
 
 ```powershell
-ssh ALIAS "systemctl is-enabled ssh.socket ssh.service 2>/dev/null || true; systemctl is-active ssh.socket ssh.service 2>/dev/null || true; systemctl cat ssh.socket 2>/dev/null || true"
+ssh ALIAS "systemctl is-enabled ssh.socket ssh.service 2>/dev/null || true; systemctl is-active ssh.socket ssh.service 2>/dev/null || true; systemctl cat ssh.socket ssh.service 2>/dev/null || true"
 ```
 
 Expected when using traditional `ssh.service`: `ssh.socket` is disabled or not found, and `ssh.service` is enabled/active. If `ssh.socket` is active, verify its `ListenStream` values match the intended SSH port; otherwise it may keep listening on the old port after reboot.
@@ -95,15 +101,21 @@ Expected when using traditional `ssh.service`: `ssh.socket` is disabled or not f
 ## SSH Listener
 
 ```powershell
-ssh ALIAS "sudo ss -ltnp | grep sshd"
+ssh ALIAS "sudo ss -ltnp | egrep 'ssh|sshd|systemd|:NEW_SSH_PORT\b|:INITIAL_PORT\b'"
 ```
 
-Expected: sshd listens on `NEW_SSH_PORT` for IPv4 and/or IPv6. It must not listen on the old port unless intentionally retained.
+Expected: SSH listens on `NEW_SSH_PORT` for IPv4 and/or IPv6, and the listener line is owned by `sshd` or by `systemd` through the intended `ssh.socket`. It must not listen on the old port unless intentionally retained. If `systemd` owns an unexpected SSH port, check `ssh.socket`.
+
+Explicit old-port assertion when the old and new ports differ:
+
+```powershell
+ssh ALIAS "if [ INITIAL_PORT != NEW_SSH_PORT ] && sudo ss -H -ltnp | grep -Eq '(^|[[:space:]])[^[:space:]]*:INITIAL_PORT[[:space:]]+.*(sshd|systemd)'; then echo 'ERROR old SSH port still listening through sshd or systemd'; exit 1; else echo 'old SSH port check passed'; fi"
+```
 
 ## Root Login Refusal
 
 ```powershell
-ssh -o BatchMode=yes -p NEW_SSH_PORT root@TARGET_HOST "true"
+ssh -o BatchMode=yes -o PreferredAuthentications=publickey -i "IDENTITY_FILE" -p NEW_SSH_PORT root@TARGET_HOST "true"
 ```
 
 Expected: command fails with a message like:
@@ -124,6 +136,8 @@ Expected: command fails with a message like:
 Permission denied (publickey).
 ```
 
+Treat this as a smoke test only. The stronger proof is the server-side effective policy showing both password and keyboard-interactive authentication are disabled.
+
 ## UFW
 
 ```powershell
@@ -142,7 +156,7 @@ Other allowed ports should be only those the user explicitly requested.
 ## Fail2ban
 
 ```powershell
-ssh ALIAS "sudo fail2ban-client status; sudo fail2ban-client status sshd"
+ssh ALIAS "sudo fail2ban-client status; sudo fail2ban-client status sshd; sudo fail2ban-client get sshd ignoreip"
 ```
 
 Expected:
@@ -152,7 +166,7 @@ Jail list: sshd
 Status for the jail: sshd
 ```
 
-Check that management IPs are not in `Banned IP list`.
+Check that management IPs appear in `ignoreip` and are not in `Banned IP list`.
 
 ## Recovery Checks
 
